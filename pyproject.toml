@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "strawberry-graphql"
 packages = [ { include = "strawberry" } ]
-version = "0.65.3"
+version = "0.67.1"
 description = "A library for creating GraphQL APIs"
 authors = ["Patrick Arminio <patrick.arminio@gmail.com>"]
 license = "MIT"
@@ -20,7 +20,7 @@ include = ["strawberry/py.typed"]
 
 [tool.poetry.dependencies]
 python = "^3.7"
-starlette = ">=0.13.6,<0.15.0"
+starlette = {version = ">=0.13.6,<0.15.0", optional = true}
 click = {version = "^7.0", optional = true}
 hupper = "^1.5"
 pygments = "^2.3"
@@ -47,7 +47,7 @@ black = {version = "^21.5b2", allow-prereleases = true}
 isort = "^5.8.0"
 pytest-asyncio = "^0.15.1"
 pytest-cov = "^2.12"
-mypy = "^0.812"
+mypy = "^0.910"
 flake8-bugbear = "^21.4"
 flake8-eradicate = "^1.0.0"
 pytest-mypy-plugins = "^1.7"
@@ -67,6 +67,7 @@ flake8-black = "^0.2.1"
 django = {version = ">=2,<4", optional = false}
 pydantic = {version = "^1.6.1", optional = false}
 email-validator = {version = "^1.1.2", optional = false}
+starlette = ">=0.13.6,<0.15.0"
 uvicorn = ">=0.11.6,<0.14.0"
 sanic = "^20.12.2"
 aiohttp = "^3.7.4.post0"
@@ -74,7 +75,7 @@ pytest-aiohttp = "^0.3.0"
 
 [tool.poetry.extras]
 aiohttp = ["aiohttp", "pytest-aiohttp"]
-debug-server = ["uvicorn"]
+debug-server = ["starlette", "uvicorn"]
 django = ["django", "pytest-django", "asgiref"]
 flask = ["flask", "pytest-flask"]
 opentelemetry = ["opentelemetry-api", "opentelemetry-sdk"]
