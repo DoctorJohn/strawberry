@@ -2,7 +2,7 @@ import json
 from io import BytesIO
 
 
-def test_upload(flask_client):
+def test_single_file_upload(flask_client):
     f = (BytesIO(b"strawberry"), "textFile.txt")
 
     query = """mutation($textFile: Upload!) {
@@ -87,3 +87,30 @@ def test_nested_file_list(flask_client):
     assert len(data["data"]["readFolder"]) == 2
     assert data["data"]["readFolder"][0] == "strawberry1"
     assert data["data"]["readFolder"][1] == "strawberry2"
+
+
+def test_mixing_upload_and_built_in_scalars(flask_client):
+    f = (BytesIO(b"strawberry"), "textFile.txt")
+
+    query = """mutation($textFile: Upload!, $appendix: String) {
+        readText(textFile: $textFile, appendix: $appendix)
+    }"""
+
+    response = flask_client.post(
+        "/graphql",
+        data={
+            "operations": json.dumps(
+                {"query": query, "variables": {"textFile": None, "appendix": "Rocks"}}
+            ),
+            "map": json.dumps({"textFile": ["variables.textFile"]}),
+            "textFile": f,
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+
+    data = json.loads(response.data.decode())
+
+    assert not data.get("errors")
+    assert data["data"]["readText"] == "strawberryRocks"

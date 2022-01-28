@@ -8,6 +8,17 @@ OPERATIONS_FIELD = (
     "}\r\n"
 )
 
+OPERATIONS_FIELD_WITH_APPENDIX = (
+    "------sanic\r\n"
+    'Content-Disposition: form-data; name="operations"\r\n'
+    "\r\n"
+    "{"
+    '"query": "mutation($textFile: Upload!, $appendix: String)'
+    '{readText(textFile: $textFile, appendix: $appendix)}",'
+    '"variables": {"textFile": null, "appendix": "Rocks"}'
+    "}\r\n"
+)
+
 MAP_FIELD = (
     "------sanic\r\n"
     'Content-Disposition: form-data; name="map"\r\n'
@@ -228,3 +239,18 @@ def test_upload_with_missing_file(sanic_client):
 
     assert response.status_code == 400
     assert "File(s) missing in form data" in response.text
+
+
+def test_mixing_upload_and_built_in_scalars(sanic_client):
+    data = OPERATIONS_FIELD_WITH_APPENDIX + MAP_FIELD + TEXT_FILE_FIELD + END
+    headers = {"content-type": "multipart/form-data; boundary=----sanic"}
+
+    request, response = sanic_client.test_client.post(
+        "/graphql",
+        data=data,
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert not response.json.get("errors")
+    assert response.json["data"]["readText"] == "strawberryRocks"

@@ -35,8 +35,8 @@ class Query:
 @strawberry.type
 class Mutation:
     @strawberry.mutation
-    def read_text(self, text_file: Upload) -> str:
-        return text_file.read().decode()
+    def read_text(self, text_file: Upload, appendix: typing.Optional[str] = "") -> str:
+        return text_file.read().decode() + appendix
 
     @strawberry.mutation
     def read_files(self, files: typing.List[Upload]) -> typing.List[str]:

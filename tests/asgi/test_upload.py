@@ -69,3 +69,19 @@ def test_upload_single_and_list_file_together(graphql_client):
     assert response.data["readFiles"][0] == "strawberry1"
     assert response.data["readFiles"][1] == "strawberry2"
     assert response.data["readText"] == "strawberry3"
+
+
+def test_mixing_upload_and_built_in_scalars(graphql_client):
+    f = BytesIO(b"strawberry")
+
+    query = """mutation($textFile: Upload!, $appendix: String) {
+        readText(textFile: $textFile, appendix: $appendix)
+    }"""
+
+    response = graphql_client.query(
+        query=query,
+        variables={"textFile": None, "appendix": "Rocks"},
+        files={"textFile": f},
+    )
+
+    assert response.data["readText"] == "strawberryRocks"

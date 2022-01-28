@@ -83,6 +83,31 @@ async def test_nested_file_list(aiohttp_app_client):
     assert data["data"]["readFolder"][1] == "strawberry2"
 
 
+async def test_mixing_upload_and_built_in_scalars(aiohttp_app_client):
+    query = """mutation($textFile: Upload!, $appendix: String) {
+        readText(textFile: $textFile, appendix: $appendix)
+    }"""
+
+    f = BytesIO(b"strawberry")
+    operations = json.dumps(
+        {"query": query, "variables": {"textFile": None, "appendix": "Rocks"}}
+    )
+    file_map = json.dumps({"textFile": ["variables.textFile"]})
+
+    form_data = aiohttp.FormData()
+    form_data.add_field("textFile", f, filename="textFile.txt")
+    form_data.add_field("operations", operations)
+    form_data.add_field("map", file_map)
+
+    response = await aiohttp_app_client.post("/graphql", data=form_data)
+    assert response.status == 200
+
+    data = await response.json()
+
+    assert not data.get("errors")
+    assert data["data"]["readText"] == "strawberryRocks"
+
+
 async def test_extra_form_data_fields_are_ignored(aiohttp_app_client):
     query = """mutation($textFile: Upload!) {
         readText(textFile: $textFile)

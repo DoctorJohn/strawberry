@@ -83,3 +83,28 @@ def test_nested_file_list(test_client):
     assert len(data["data"]["readFolder"]) == 2
     assert data["data"]["readFolder"][0] == "strawberry1"
     assert data["data"]["readFolder"][1] == "strawberry2"
+
+
+def test_mixing_upload_and_built_in_scalars(test_client):
+    f = BytesIO(b"strawberry")
+
+    query = """mutation($textFile: Upload!, $appendix: String) {
+        readText(textFile: $textFile, appendix: $appendix)
+    }"""
+
+    response = test_client.post(
+        "/graphql",
+        data={
+            "operations": json.dumps(
+                {"query": query, "variables": {"textFile": None, "appendix": "Rocks"}}
+            ),
+            "map": json.dumps({"textFile": ["variables.textFile"]}),
+        },
+        files={"textFile": f},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+
+    assert not data.get("errors")
+    assert data["data"]["readText"] == "strawberryRocks"
