@@ -31,9 +31,13 @@ async def test_custom_context(aiohttp_client):
             return info.context["custom_value"]
 
     schema = strawberry.Schema(query=Query)
+    view = CustomGraphQLView(schema=schema)
+
+    async def handle(request):
+        return await view(request)
 
     app = web.Application()
-    app.router.add_route("*", "/graphql", CustomGraphQLView(schema=schema))
+    app.router.add_route("*", "/graphql", handle)
     client = await aiohttp_client(app)
 
     query = "{ customContextValue }"
@@ -56,12 +60,16 @@ async def test_custom_process_result(aiohttp_client):
             return "ABC"
 
     schema = strawberry.Schema(query=Query)
+    view = CustomGraphQLView(schema=schema)
+
+    async def handle(request):
+        return await view(request)
 
     app = web.Application()
-    app.router.add_route("*", "/graphql", CustomGraphQLView(schema=schema))
+    app.router.add_route("*", "/graphql", handle)
     client = await aiohttp_client(app)
 
-    query = "{ abc }"
+    query = "{ hello }"
     response = await client.post("/graphql", json={"query": query})
     data = await response.json()
 
@@ -69,22 +77,9 @@ async def test_custom_process_result(aiohttp_client):
     assert data == {}
 
 
-async def test_setting_cookies_via_context(aiohttp_client):
-    @strawberry.type
-    class Query:
-        @strawberry.field
-        def abc(self, info) -> str:
-            info.context["response"].set_cookie("TEST_COOKIE", "TEST_VALUE")
-            return "ABC"
-
-    schema = strawberry.Schema(query=Query)
-
-    app = web.Application()
-    app.router.add_route("*", "/graphql", GraphQLView(schema=schema))
-    client = await aiohttp_client(app)
-
-    query = "{ abc }"
-    response = await client.post("/graphql", json={"query": query})
+async def test_setting_cookies_via_context(aiohttp_app_client):
+    query = "{ cookie }"
+    response = await aiohttp_app_client.post("/graphql", json={"query": query})
 
     assert response.status == 200
     assert response.cookies.get("TEST_COOKIE").value == "TEST_VALUE"

@@ -31,6 +31,11 @@ class DebugInfo:
 class Query:
     hello: str = "strawberry"
 
+    @strawberry.field
+    def cookie(self, info) -> str:
+        info.context["response"].set_cookie("TEST_COOKIE", "TEST_VALUE")
+        return "ABC"
+
 
 @strawberry.type
 class Mutation:

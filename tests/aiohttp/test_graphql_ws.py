@@ -443,8 +443,12 @@ async def test_custom_context(aiohttp_client):
             return {"request": request, "response": response, "custom_value": "Hi"}
 
     view = MyGraphQLView(schema=schema, keep_alive=False)
+
+    async def handle(request):
+        return await view(request)
+
     app = web.Application()
-    app.router.add_route("*", "/graphql", view)
+    app.router.add_route("*", "/graphql", handle)
     aiohttp_app_client = await aiohttp_client(app)
 
     async with aiohttp_app_client.ws_connect(
@@ -531,8 +535,12 @@ async def test_resolving_enums(aiohttp_client):
 
 async def test_task_cancellation_separation(aiohttp_client):
     view = GraphQLView(schema=schema, keep_alive=False)
+
+    async def handle(request):
+        return await view(request)
+
     app = web.Application()
-    app.router.add_route("*", "/graphql", view)
+    app.router.add_route("*", "/graphql", handle)
     aiohttp_app_client = await aiohttp_client(app)
 
     # Note Python 3.7 does not support Task.get_name/get_coro so we have to use

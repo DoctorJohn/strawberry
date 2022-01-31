@@ -31,7 +31,22 @@ class MyGraphQLView(GraphQLView):
 
 
 def create_app(**kwargs):
+    view = MyGraphQLView(schema=schema, **kwargs)
+
+    async def handle(request):
+        """
+        Python introspection doesn't realize our aiohttp GraphQLView.__call__ method is
+        asynchronous. This causes aiohttp to warn us about not-synchronous handlers no
+        longer being supported. To get rid of the warning, we wrap GraphQLView.__call__
+        with this (clearly asynchronous) method.
+
+        Related issues:
+        https://github.com/aio-libs/aiohttp/issues/1993
+        https://github.com/aio-libs/aiohttp/issues/3252
+        """
+        return await view(request)
+
     app = web.Application()
-    app.router.add_route("*", "/graphql", MyGraphQLView(schema=schema, **kwargs))
+    app.router.add_route("*", "/graphql", handle)
 
     return app
