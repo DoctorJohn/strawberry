@@ -12,14 +12,15 @@ from typing import (
     Mapping,
     Optional,
     cast,
+    AsyncGenerator,
 )
 
-from aiohttp import web
-from strawberry.aiohttp.handlers import (
-    GraphQLTransportWSHandler,
-    GraphQLWSHandler,
+from aiohttp import web, http
+from strawberry.http.async_base_view import (
+    AsyncBaseHTTPView,
+    AsyncHTTPRequestAdapter,
+    AsyncWebSocketAdapter,
 )
-from strawberry.http.async_base_view import AsyncBaseHTTPView, AsyncHTTPRequestAdapter
 from strawberry.http.exceptions import HTTPException
 from strawberry.http.types import FormData, HTTPMethod, QueryParams
 from strawberry.http.typevars import (
@@ -74,17 +75,40 @@ class AioHTTPRequestAdapter(AsyncHTTPRequestAdapter):
         return self.request.content_type
 
 
+class AioHTTPWebSocketAdapter(AsyncWebSocketAdapter):
+    def __init__(self, request: web.Request, ws: web.WebSocketResponse) -> None:
+        self.request = request
+        self.ws = ws
+
+    async def listen(self) -> AsyncGenerator[str, None]:
+        async for ws_message in self.ws:
+            if ws_message.type == http.WSMsgType.TEXT:
+                yield ws_message.data
+
+    async def send_json(self, data: Mapping[str, object]) -> None:
+        await self.ws.send_json(data)
+
+    async def close(self, code: int, reason: str) -> None:
+        await self.ws.close(code=code, message=reason.encode())
+
+
 class GraphQLView(
-    AsyncBaseHTTPView[web.Request, web.Response, web.Response, Context, RootValue]
+    AsyncBaseHTTPView[
+        web.Request,
+        web.Response,
+        web.Response,
+        web.WebSocketResponse,
+        Context,
+        RootValue,
+    ]
 ):
     # Mark the view as coroutine so that AIOHTTP does not confuse it with a deprecated
     # bare handler function.
     _is_coroutine = asyncio.coroutines._is_coroutine  # type: ignore[attr-defined]
 
-    graphql_transport_ws_handler_class = GraphQLTransportWSHandler
-    graphql_ws_handler_class = GraphQLWSHandler
     allow_queries_via_get = True
     request_adapter_class = AioHTTPRequestAdapter
+    websocket_adapter_class = AioHTTPWebSocketAdapter
 
     def __init__(
         self,
@@ -125,42 +149,31 @@ class GraphQLView(
     async def get_sub_response(self, request: web.Request) -> web.Response:
         return web.Response()
 
-    async def __call__(self, request: web.Request) -> web.StreamResponse:
+    async def is_websocket_request(self, request: web.Request) -> bool:
+        # TODO: check whether we need to provide the subprotocols here already
         ws = web.WebSocketResponse(protocols=self.subscription_protocols)
-        ws_test = ws.can_prepare(request)
+        return ws.can_prepare(request).ok
 
-        if not ws_test.ok:
-            try:
-                return await self.run(request=request)
-            except HTTPException as e:
-                return web.Response(
-                    body=e.reason,
-                    status=e.status_code,
-                )
+    async def get_websocket_subprotocol(self, request: web.Request) -> Optional[str]:
+        # TODO: check whether we need to provide the subprotocols here already
+        ws = web.WebSocketResponse(protocols=self.subscription_protocols)
+        return ws.can_prepare(request).protocol
 
-        if ws_test.protocol == GRAPHQL_TRANSPORT_WS_PROTOCOL:
-            return await self.graphql_transport_ws_handler_class(
-                schema=self.schema,
-                debug=self.debug,
-                connection_init_wait_timeout=self.connection_init_wait_timeout,
-                get_context=self.get_context,  # type: ignore
-                get_root_value=self.get_root_value,
-                request=request,
-            ).handle()
-        elif ws_test.protocol == GRAPHQL_WS_PROTOCOL:
-            return await self.graphql_ws_handler_class(
-                schema=self.schema,
-                debug=self.debug,
-                keep_alive=self.keep_alive,
-                keep_alive_interval=self.keep_alive_interval,
-                get_context=self.get_context,
-                get_root_value=self.get_root_value,
-                request=request,
-            ).handle()
-        else:
-            await ws.prepare(request)
-            await ws.close(code=4406, message=b"Subprotocol not acceptable")
-            return ws
+    async def create_websocket_response(
+        self, request: web.Request
+    ) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse(protocols=self.subscription_protocols)
+        await ws.prepare(request)
+        return ws
+
+    async def __call__(self, request: web.Request) -> web.StreamResponse:
+        try:
+            return await self.run(request=request)
+        except HTTPException as e:
+            return web.Response(
+                body=e.reason,
+                status=e.status_code,
+            )
 
     async def get_root_value(self, request: web.Request) -> Optional[RootValue]:
         return None

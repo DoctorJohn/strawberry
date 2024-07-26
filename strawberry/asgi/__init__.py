@@ -1,10 +1,12 @@
 from __future__ import annotations
+from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 import warnings
 from datetime import timedelta
 from typing import (
     TYPE_CHECKING,
     Any,
+    AsyncGenerator,
     Mapping,
     Optional,
     Sequence,
@@ -17,11 +19,11 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, Response
 from starlette.websockets import WebSocket
 
-from strawberry.asgi.handlers import (
-    GraphQLTransportWSHandler,
-    GraphQLWSHandler,
+from strawberry.http.async_base_view import (
+    AsyncBaseHTTPView,
+    AsyncHTTPRequestAdapter,
+    AsyncWebSocketAdapter,
 )
-from strawberry.http.async_base_view import AsyncBaseHTTPView, AsyncHTTPRequestAdapter
 from strawberry.http.exceptions import HTTPException
 from strawberry.http.types import FormData, HTTPMethod, QueryParams
 from strawberry.http.typevars import (
@@ -70,19 +72,43 @@ class ASGIRequestAdapter(AsyncHTTPRequestAdapter):
         )
 
 
+class ASGIWebSocketAdapter(AsyncWebSocketAdapter):
+    def __init__(self, request: Union[Request, WebSocket], response: None) -> None:
+        # TODO: we should really separate http and ws requests
+        assert isinstance(request, WebSocket)
+        self.ws = request
+
+    async def listen(self) -> AsyncGenerator[str, None]:
+        try:
+            while self.ws.application_state != WebSocketState.DISCONNECTED:
+                try:
+                    yield await self.ws.receive_json()
+                except KeyError:  # noqa: PERF203
+                    # Ignore non-text messages
+                    pass
+        except WebSocketDisconnect:  # pragma: no cover
+            pass
+
+    async def send_json(self, message: Mapping[str, object]) -> None:
+        await self.ws.send_json(message)
+
+    async def close(self, code: int, reason: str) -> None:
+        await self.ws.close(code=code, reason=reason)
+
+
 class GraphQL(
     AsyncBaseHTTPView[
         Union[Request, WebSocket],
         Response,
         Response,
+        None,
         Context,
         RootValue,
     ]
 ):
-    graphql_transport_ws_handler_class = GraphQLTransportWSHandler
-    graphql_ws_handler_class = GraphQLWSHandler
     allow_queries_via_get = True
     request_adapter_class = ASGIRequestAdapter  # pyright: ignore
+    websocket_adapter_class = ASGIWebSocketAdapter
 
     def __init__(
         self,
@@ -117,47 +143,21 @@ class GraphQL(
         else:
             self.graphql_ide = graphql_ide
 
-    async def __call__(self, scope: Request, receive: Receive, send: Send) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
-            return await self.handle_http(scope, receive, send)  # type: ignore
-
+            request = Request(scope=scope, receive=receive)
         elif scope["type"] == "websocket":
-            ws = WebSocket(scope, receive=receive, send=send)  # type: ignore
-            preferred_protocol = self.pick_preferred_protocol(ws)
-
-            if preferred_protocol == GRAPHQL_TRANSPORT_WS_PROTOCOL:
-                await self.graphql_transport_ws_handler_class(
-                    schema=self.schema,
-                    debug=self.debug,
-                    connection_init_wait_timeout=self.connection_init_wait_timeout,
-                    get_context=self.get_context,
-                    get_root_value=self.get_root_value,
-                    ws=ws,
-                ).handle()
-
-            elif preferred_protocol == GRAPHQL_WS_PROTOCOL:
-                await self.graphql_ws_handler_class(
-                    schema=self.schema,
-                    debug=self.debug,
-                    keep_alive=self.keep_alive,
-                    keep_alive_interval=self.keep_alive_interval,
-                    get_context=self.get_context,
-                    get_root_value=self.get_root_value,
-                    ws=ws,
-                ).handle()
-
-            else:
-                # Subprotocol not acceptable
-                await ws.close(code=4406)
-
+            request = WebSocket(scope, receive=receive, send=send)
         else:  # pragma: no cover
             raise ValueError("Unknown scope type: {!r}".format(scope["type"]))
 
-    def pick_preferred_protocol(self, ws: WebSocket) -> Optional[str]:
-        protocols = ws["subprotocols"]
-        intersection = set(protocols) & set(self.protocols)
-        sorted_intersection = sorted(intersection, key=protocols.index)
-        return next(iter(sorted_intersection), None)
+        try:
+            response = await self.run(request)
+        except HTTPException as e:
+            response = PlainTextResponse(e.reason, status_code=e.status_code)
+
+        if response is not None:
+            await response(scope, receive, send)
 
     async def get_root_value(self, request: Union[Request, WebSocket]) -> Optional[Any]:
         return None
@@ -176,21 +176,6 @@ class GraphQL(
         del sub_response.headers["content-length"]
 
         return sub_response
-
-    async def handle_http(
-        self,
-        scope: Scope,
-        receive: Receive,
-        send: Send,
-    ) -> None:
-        request = Request(scope=scope, receive=receive)
-
-        try:
-            response = await self.run(request)
-        except HTTPException as e:
-            response = PlainTextResponse(e.reason, status_code=e.status_code)  # pyright: ignore
-
-        await response(scope, receive, send)
 
     async def render_graphql_ide(self, request: Union[Request, WebSocket]) -> Response:
         return HTMLResponse(self.graphql_ide_html)
@@ -213,3 +198,15 @@ class GraphQL(
             response.status_code = sub_response.status_code
 
         return response
+
+    async def is_websocket_request(self, request: Request) -> bool:
+        return request.scope["type"] == "websocket"
+
+    async def get_websocket_subprotocol(self, request: WebSocket) -> Optional[str]:
+        protocols = request["subprotocols"]
+        intersection = set(protocols) & set(self.protocols)
+        sorted_intersection = sorted(intersection, key=protocols.index)
+        return next(iter(sorted_intersection), None)
+
+    async def create_websocket_response(self, request: WebSocket) -> None:
+        return None

@@ -1,11 +1,11 @@
 from typing import Any
 
 from aiohttp import web
-from strawberry.aiohttp.handlers import GraphQLTransportWSHandler, GraphQLWSHandler
 from strawberry.aiohttp.views import GraphQLView
 from tests.views.schema import Query, schema
 
 
+"""
 class DebuggableGraphQLTransportWSHandler(GraphQLTransportWSHandler):
     def get_tasks(self) -> list:
         return [op.task for op in self.operations.values()]
@@ -28,12 +28,10 @@ class DebuggableGraphQLWSHandler(GraphQLWSHandler):
         context["get_tasks"] = self.get_tasks
         context["connectionInitTimeoutTask"] = None
         return context
+"""
 
 
 class MyGraphQLView(GraphQLView):
-    graphql_transport_ws_handler_class = DebuggableGraphQLTransportWSHandler
-    graphql_ws_handler_class = DebuggableGraphQLWSHandler
-
     async def get_root_value(self, request: web.Request) -> Query:
         await super().get_root_value(request)  # for coverage
         return Query()

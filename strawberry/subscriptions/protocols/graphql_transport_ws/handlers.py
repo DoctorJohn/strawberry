@@ -1,8 +1,8 @@
 from __future__ import annotations
+import json
 
 import asyncio
 import logging
-from abc import ABC, abstractmethod
 from contextlib import suppress
 from typing import (
     TYPE_CHECKING,
@@ -34,6 +34,7 @@ from strawberry.types.unset import UNSET
 from strawberry.utils.debug import pretty_print_graphql_operation
 from strawberry.utils.operation import get_operation_type
 
+
 if TYPE_CHECKING:
     from datetime import timedelta
 
@@ -42,17 +43,24 @@ if TYPE_CHECKING:
         GraphQLTransportMessage,
     )
     from strawberry.types import ExecutionResult
+    from strawberry.http.async_base_view import AsyncWebSocketAdapter
 
 
-class BaseGraphQLTransportWSHandler(ABC):
+class BaseGraphQLTransportWSHandler:
     task_logger: logging.Logger = logging.getLogger("strawberry.ws.task")
 
     def __init__(
         self,
+        websocket: "AsyncWebSocketAdapter",
+        context: object,
+        root_value: object,
         schema: BaseSchema,
         debug: bool,
         connection_init_wait_timeout: timedelta,
     ) -> None:
+        self.websocket = websocket
+        self.context = context
+        self.root_value = root_value
         self.schema = schema
         self.debug = debug
         self.connection_init_wait_timeout = connection_init_wait_timeout
@@ -64,28 +72,21 @@ class BaseGraphQLTransportWSHandler(ABC):
         self.completed_tasks: List[asyncio.Task] = []
         self.connection_params: Optional[Dict[str, Any]] = None
 
-    @abstractmethod
-    async def get_context(self) -> Any:
-        """Return the operations context."""
-
-    @abstractmethod
-    async def get_root_value(self) -> Any:
-        """Return the schemas root value."""
-
-    @abstractmethod
-    async def send_json(self, data: dict) -> None:
-        """Send the data JSON encoded to the WebSocket client."""
-
-    @abstractmethod
-    async def close(self, code: int, reason: str) -> None:
-        """Close the WebSocket with the passed code and reason."""
-
-    @abstractmethod
-    async def handle_request(self) -> Any:
-        """Handle the request this instance was created for."""
-
     async def handle(self) -> Any:
-        return await self.handle_request()
+        self.on_request_accepted()
+
+        try:
+            async for text_message in self.websocket.listen():
+                message = json.loads(text_message)
+                await self.handle_message(message)
+
+                # TODO: the protocol demands that non-text messages result in an error.
+                # TODO: let self.websocket.listen() yield Union[str, None]? and use None to indicate non-text messages
+                # TODO: also wrap with try catch and handle json parsing errors
+                #error_message = "WebSocket message type must be text"
+                #await self.handle_invalid_message(error_message)
+        finally:
+            await self.shutdown()
 
     async def shutdown(self) -> None:
         if self.connection_init_timeout_task:
@@ -117,7 +118,7 @@ class BaseGraphQLTransportWSHandler(ABC):
 
             self.connection_timed_out = True
             reason = "Connection initialisation timeout"
-            await self.close(code=4408, reason=reason)
+            await self.websocket.close(code=4408, reason=reason)
         except Exception as error:
             await self.handle_task_exception(error)  # pragma: no cover
         finally:
@@ -188,14 +189,14 @@ class BaseGraphQLTransportWSHandler(ABC):
         )
 
         if not isinstance(payload, dict):
-            await self.close(code=4400, reason="Invalid connection init payload")
+            await self.websocket.close(code=4400, reason="Invalid connection init payload")
             return
 
         self.connection_params = payload
 
         if self.connection_init_received:
             reason = "Too many initialisation requests"
-            await self.close(code=4429, reason=reason)
+            await self.websocket.close(code=4429, reason=reason)
             return
 
         self.connection_init_received = True
@@ -210,13 +211,13 @@ class BaseGraphQLTransportWSHandler(ABC):
 
     async def handle_subscribe(self, message: SubscribeMessage) -> None:
         if not self.connection_acknowledged:
-            await self.close(code=4401, reason="Unauthorized")
+            await self.websocket.close(code=4401, reason="Unauthorized")
             return
 
         try:
             graphql_document = parse(message.payload.query)
         except GraphQLSyntaxError as exc:
-            await self.close(code=4400, reason=exc.message)
+            await self.websocket.close(code=4400, reason=exc.message)
             return
 
         try:
@@ -224,12 +225,12 @@ class BaseGraphQLTransportWSHandler(ABC):
                 graphql_document, message.payload.operationName
             )
         except RuntimeError:
-            await self.close(code=4400, reason="Can't get GraphQL operation type")
+            await self.websocket.close(code=4400, reason="Can't get GraphQL operation type")
             return
 
         if message.id in self.operations:
             reason = f"Subscriber for {message.id} already exists"
-            await self.close(code=4409, reason=reason)
+            await self.websocket.close(code=4409, reason=reason)
             return
 
         if self.debug:  # pragma: no cover
@@ -239,10 +240,8 @@ class BaseGraphQLTransportWSHandler(ABC):
                 message.payload.variables,
             )
 
-        context = await self.get_context()
-        if isinstance(context, dict):
-            context["connection_params"] = self.connection_params
-        root_value = await self.get_root_value()
+        if isinstance(self.context, dict):
+            self.context["connection_params"] = self.connection_params
 
         # Get an AsyncGenerator yielding the results
         if operation_type == OperationType.SUBSCRIPTION:
@@ -250,8 +249,8 @@ class BaseGraphQLTransportWSHandler(ABC):
                 query=message.payload.query,
                 variable_values=message.payload.variables,
                 operation_name=message.payload.operationName,
-                context_value=context,
-                root_value=root_value,
+                context_value=self.context,
+                root_value=self.root_value,
             )
         else:
             # create AsyncGenerator returning a single result
@@ -259,8 +258,8 @@ class BaseGraphQLTransportWSHandler(ABC):
                 yield await self.schema.execute(
                     query=message.payload.query,
                     variable_values=message.payload.variables,
-                    context_value=context,
-                    root_value=root_value,
+                    context_value=self.context,
+                    root_value=self.root_value,
                     operation_name=message.payload.operationName,
                 )
 
@@ -352,11 +351,11 @@ class BaseGraphQLTransportWSHandler(ABC):
         await self.cleanup_operation(operation_id=message.id)
 
     async def handle_invalid_message(self, error_message: str) -> None:
-        await self.close(code=4400, reason=error_message)
+        await self.websocket.close(code=4400, reason=error_message)
 
     async def send_message(self, message: GraphQLTransportMessage) -> None:
         data = message.as_dict()
-        await self.send_json(data)
+        await self.websocket.send_json(data)
 
     async def cleanup_operation(self, operation_id: str) -> None:
         if operation_id not in self.operations:

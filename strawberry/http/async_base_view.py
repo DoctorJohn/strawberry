@@ -1,4 +1,5 @@
 import abc
+from datetime import timedelta
 import json
 from typing import (
     Callable,
@@ -8,6 +9,7 @@ from typing import (
     Mapping,
     Optional,
     Union,
+    AsyncGenerator,
 )
 
 from graphql import GraphQLError
@@ -21,11 +23,24 @@ from strawberry.schema.base import BaseSchema
 from strawberry.schema.exceptions import InvalidOperationTypeError
 from strawberry.types import ExecutionResult
 from strawberry.types.graphql import OperationType
+from strawberry.subscriptions import GRAPHQL_TRANSPORT_WS_PROTOCOL, GRAPHQL_WS_PROTOCOL
 
 from .base import BaseView
 from .exceptions import HTTPException
 from .types import FormData, HTTPMethod, QueryParams
-from .typevars import Context, Request, Response, RootValue, SubResponse
+from .typevars import (
+    Context,
+    Request,
+    Response,
+    RootValue,
+    SubResponse,
+    WebSocketResponse,
+)
+
+from strawberry.subscriptions.protocols.graphql_transport_ws.handlers import (
+    BaseGraphQLTransportWSHandler,
+)
+from strawberry.subscriptions.protocols.graphql_ws.handlers import BaseGraphQLWSHandler
 
 
 class AsyncHTTPRequestAdapter(abc.ABC):
@@ -52,14 +67,28 @@ class AsyncHTTPRequestAdapter(abc.ABC):
     async def get_form_data(self) -> FormData: ...
 
 
+class AsyncWebSocketAdapter(abc.ABC):
+    async def listen(self) -> AsyncGenerator[str, None]: ...
+    async def send_json(self, message: Mapping[str, object]) -> None: ...
+    async def close(self, code: int, reason: str) -> None: ...
+
+
 class AsyncBaseHTTPView(
     abc.ABC,
     BaseView[Request],
-    Generic[Request, Response, SubResponse, Context, RootValue],
+    Generic[Request, Response, SubResponse, WebSocketResponse, Context, RootValue],
 ):
     schema: BaseSchema
     graphql_ide: Optional[GraphQL_IDE]
+    debug: bool
+    keep_alive_interval: Optional[float] = None
+    connection_init_wait_timeout: timedelta = timedelta(minutes=1)
     request_adapter_class: Callable[[Request], AsyncHTTPRequestAdapter]
+    websocket_adapter_class: Callable[
+        [Request, WebSocketResponse], AsyncWebSocketAdapter
+    ]
+    graphql_transport_ws_handler_class = BaseGraphQLTransportWSHandler
+    graphql_ws_handler_class = BaseGraphQLWSHandler
 
     @property
     @abc.abstractmethod
@@ -81,6 +110,17 @@ class AsyncBaseHTTPView(
 
     @abc.abstractmethod
     async def render_graphql_ide(self, request: Request) -> Response: ...
+
+    # TODO: maybe this should be part of the request adapter. however, under asgi this would be scope based
+    @abc.abstractmethod
+    async def is_websocket_request(self, request: Request) -> bool: ...
+
+    # TODO: maybe this should be part of the request adapter. however, under asgi this would be scope based
+    @abc.abstractmethod
+    async def get_websocket_subprotocol(self, request: Request) -> Optional[str]: ...
+
+    @abc.abstractmethod
+    def create_websocket_response(self, request: Request) -> WebSocketResponse: ...
 
     async def execute_operation(
         self, request: Request, context: Context, root_value: Optional[RootValue]
@@ -143,7 +183,7 @@ class AsyncBaseHTTPView(
         request: Request,
         context: Optional[Context] = UNSET,
         root_value: Optional[RootValue] = UNSET,
-    ) -> Response:
+    ) -> Union[Response, WebSocketResponse]:
         request_adapter = self.request_adapter_class(request)
 
         if not self.is_request_allowed(request_adapter):
@@ -166,6 +206,36 @@ class AsyncBaseHTTPView(
         )
 
         assert context
+
+        if self.is_websocket_request(request):
+            websocket_response = self.create_websocket_response(request)
+            websocket = self.websocket_adapter_class(request, websocket_response)
+
+            if (
+                await self.get_websocket_subprotocol(request)
+                == GRAPHQL_TRANSPORT_WS_PROTOCOL
+            ):
+                await self.graphql_transport_ws_handler_class(
+                    websocket=websocket,
+                    context=context,
+                    root_value=root_value,
+                    schema=self.schema,
+                    debug=self.debug,
+                    connection_init_wait_timeout=self.connection_init_wait_timeout,
+                ).handle()
+            elif await self.get_websocket_subprotocol(request) == GRAPHQL_WS_PROTOCOL:
+                await self.graphql_ws_handler_class(
+                    websocket=websocket,
+                    context=context,
+                    root_value=root_value,
+                    schema=self.schema,
+                    debug=self.debug,
+                    keep_alive_interval=self.keep_alive_interval,
+                ).handle()
+            else:
+                await websocket.close(4406, "Subprotocol not acceptable")
+
+            return websocket_response
 
         try:
             result = await self.execute_operation(
