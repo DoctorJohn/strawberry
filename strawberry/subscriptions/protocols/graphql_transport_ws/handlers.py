@@ -242,6 +242,8 @@ class BaseGraphQLTransportWSHandler:
 
         if isinstance(self.context, dict):
             self.context["connection_params"] = self.connection_params
+        elif hasattr(self.context, "connection_params"):
+            setattr(self.context, "connection_params", self.connection_params)
 
         # Get an AsyncGenerator yielding the results
         if operation_type == OperationType.SUBSCRIPTION:

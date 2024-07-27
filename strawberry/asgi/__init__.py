@@ -107,7 +107,7 @@ class GraphQL(
     ]
 ):
     allow_queries_via_get = True
-    request_adapter_class = ASGIRequestAdapter  # pyright: ignore
+    request_adapter_class = ASGIRequestAdapter
     websocket_adapter_class = ASGIWebSocketAdapter
 
     def __init__(
