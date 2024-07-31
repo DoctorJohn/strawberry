@@ -1,20 +1,36 @@
 from __future__ import annotations
+from strawberry.http.temporal_response import TemporalResponse
 
 import datetime
-from typing import TYPE_CHECKING, Any, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Optional, Sequence, Tuple, Union, AsyncGenerator, Mapping
 
 from strawberry.subscriptions import GRAPHQL_TRANSPORT_WS_PROTOCOL, GRAPHQL_WS_PROTOCOL
+from strawberry.http.async_base_view import AsyncWebSocketAdapter, AsyncBaseHTTPView
 
-from .base import ChannelsConsumer, ChannelsWSConsumer
-from .graphql_transport_ws_handler import GraphQLTransportWSHandler
-from .graphql_ws_handler import GraphQLWSHandler
+from .base import ChannelsConsumer, ChannelsWSConsumer, ChannelsRequest, ChannelsResponse
 
 if TYPE_CHECKING:
     from strawberry.http.typevars import Context, RootValue
     from strawberry.schema import BaseSchema
 
 
-class GraphQLWSConsumer(ChannelsWSConsumer):
+class ChannelsWebSocketAdapter(AsyncWebSocketAdapter):
+    async def listen(self) -> AsyncGenerator[str, None]: ...
+    async def send_json(self, message: Mapping[str, object]) -> None: ...
+    async def close(self, code: int, reason: str) -> None: ...
+
+
+class GraphQLWSConsumer(
+    ChannelsWSConsumer,
+    AsyncBaseHTTPView[
+        "GraphQLWSConsumer",
+        None,
+        None,
+        None,
+        Context,
+        RootValue,
+    ],
+):
     """A channels websocket consumer for GraphQL.
 
     This handles the connections, then hands off to the appropriate
@@ -38,10 +54,10 @@ class GraphQLWSConsumer(ChannelsWSConsumer):
     })
     ```
     """
+    websocket_adapter_class = ChannelsWebSocketAdapter
 
-    graphql_transport_ws_handler_class = GraphQLTransportWSHandler
-    graphql_ws_handler_class = GraphQLWSHandler
-    _handler: Union[GraphQLWSHandler, GraphQLTransportWSHandler]
+    #graphql_transport_ws_handler_class = GraphQLTransportWSHandler # TODO: remove
+    #graphql_ws_handler_class = GraphQLWSHandler # TODO: remove
 
     def __init__(
         self,
@@ -74,33 +90,7 @@ class GraphQLWSConsumer(ChannelsWSConsumer):
         return next(iter(sorted_intersection), None)
 
     async def connect(self) -> None:
-        preferred_protocol = self.pick_preferred_protocol(self.scope["subprotocols"])
-
-        if preferred_protocol == GRAPHQL_TRANSPORT_WS_PROTOCOL:
-            self._handler = self.graphql_transport_ws_handler_class(
-                schema=self.schema,
-                debug=self.debug,
-                connection_init_wait_timeout=self.connection_init_wait_timeout,
-                get_context=self.get_context,
-                get_root_value=self.get_root_value,
-                ws=self,
-            )
-        elif preferred_protocol == GRAPHQL_WS_PROTOCOL:
-            self._handler = self.graphql_ws_handler_class(
-                schema=self.schema,
-                debug=self.debug,
-                keep_alive=self.keep_alive,
-                keep_alive_interval=self.keep_alive_interval,
-                get_context=self.get_context,
-                get_root_value=self.get_root_value,
-                ws=self,
-            )
-        else:
-            # Subprotocol not acceptable
-            return await self.close(code=4406)
-
-        await self._handler.handle()
-        return None
+        return await self.run(self)
 
     async def receive(self, *args: str, **kwargs: Any) -> None:
         # Overriding this so that we can pass the errors to handle_invalid_message

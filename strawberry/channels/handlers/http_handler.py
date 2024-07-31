@@ -27,78 +27,13 @@ from strawberry.http.types import FormData
 from strawberry.http.typevars import Context, RootValue
 from strawberry.types.unset import UNSET
 
-from .base import ChannelsConsumer
+from .base import ChannelsConsumer, ChannelsResponse, ChannelsRequest
 
 if TYPE_CHECKING:
     from strawberry.http import GraphQLHTTPResponse
     from strawberry.http.ides import GraphQL_IDE
     from strawberry.http.types import HTTPMethod, QueryParams
     from strawberry.schema import BaseSchema
-
-
-@dataclasses.dataclass
-class ChannelsResponse:
-    content: bytes
-    status: int = 200
-    content_type: str = "application/json"
-    headers: Dict[bytes, bytes] = dataclasses.field(default_factory=dict)
-
-
-@dataclasses.dataclass
-class ChannelsRequest:
-    consumer: ChannelsConsumer
-    body: bytes
-
-    @property
-    def query_params(self) -> QueryParams:
-        query_params_str = self.consumer.scope["query_string"].decode()
-
-        query_params = {}
-        for key, value in parse_qs(query_params_str, keep_blank_values=True).items():
-            # Only one argument per key is expected here
-            query_params[key] = value[0]
-
-        return query_params
-
-    @property
-    def headers(self) -> Mapping[str, str]:
-        return {
-            header_name.decode().lower(): header_value.decode()
-            for header_name, header_value in self.consumer.scope["headers"]
-        }
-
-    @property
-    def method(self) -> HTTPMethod:
-        return self.consumer.scope["method"].upper()
-
-    @property
-    def content_type(self) -> Optional[str]:
-        return self.headers.get("content-type", None)
-
-    @cached_property
-    def form_data(self) -> FormData:
-        upload_handlers = [
-            uploadhandler.load_handler(handler)
-            for handler in settings.FILE_UPLOAD_HANDLERS
-        ]
-
-        parser = MultiPartParser(
-            {
-                "CONTENT_TYPE": self.headers.get("content-type"),
-                "CONTENT_LENGTH": self.headers.get("content-length", "0"),
-            },
-            BytesIO(self.body),
-            upload_handlers,
-        )
-
-        querydict, files = parser.parse()
-
-        form = {
-            "operations": querydict.get("operations", "{}"),
-            "map": querydict.get("map", "{}"),
-        }
-
-        return FormData(files=files, form=form)
 
 
 class BaseChannelsRequestAdapter:
@@ -206,6 +141,7 @@ class GraphQLHTTPConsumer(
         ChannelsRequest,
         ChannelsResponse,
         TemporalResponse,
+        None,
         Context,
         RootValue,
     ],
