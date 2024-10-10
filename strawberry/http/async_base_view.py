@@ -21,7 +21,7 @@ from typing_extensions import Literal, TypeGuard
 
 from graphql import GraphQLError
 
-from strawberry import UNSET
+from strawberry.types.unset import UNSET, UnsetType
 from strawberry.exceptions import MissingQueryError
 from strawberry.file_uploads.utils import replace_placeholders_with_files
 from strawberry.http import (
@@ -469,6 +469,19 @@ class AsyncBaseHTTPView(
         self, request: Request, result: ExecutionResult
     ) -> GraphQLHTTPResponse:
         return process_result(result)
+    
+    async def acknowledge_ws_connection(self) -> Union[UnsetType, None, Dict[str, object]]:
+        """
+        REJECT:
+            OLD PROTOCOL: GQL_CONNECTION_ERROR + payload: Object
+            NEW PROTOCOL: 4403: Forbidden
+            Python: raise SomeError(payload=None)
+        ACK:
+            OLD PROTOCOL: payload?: Record<string, unknown> | null;
+            NEW PROTOCOL: payload?: Record<string, unknown> | null;
+            Python: return UnsetType, Dict[str, object], None
+        """
+        return UNSET
 
 
 __all__ = ["AsyncBaseHTTPView"]
