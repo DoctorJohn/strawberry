@@ -14,6 +14,7 @@ from typing import (
 
 from graphql import GraphQLError, GraphQLSyntaxError, parse
 
+from strawberry.exceptions import ConnectionRejectionError
 from strawberry.http.exceptions import (
     NonJsonMessageReceived,
     NonTextMessageReceived,
@@ -31,6 +32,7 @@ from strawberry.subscriptions.protocols.graphql_transport_ws.types import (
 from strawberry.types import ExecutionResult
 from strawberry.types.execution import PreExecutionError
 from strawberry.types.graphql import OperationType
+from strawberry.types.unset import UnsetType
 from strawberry.utils.debug import pretty_print_graphql_operation
 from strawberry.utils.operation import get_operation_type
 
@@ -66,7 +68,6 @@ class BaseGraphQLTransportWSHandler:
         self.connection_timed_out = False
         self.operations: Dict[str, Operation] = {}
         self.completed_tasks: List[asyncio.Task] = []
-        self.connection_params: Optional[Dict[str, object]] = None
 
     async def handle(self) -> None:
         self.on_request_accepted()
@@ -169,15 +170,33 @@ class BaseGraphQLTransportWSHandler:
             )
             return
 
-        self.connection_params = payload
-
         if self.connection_init_received:
             reason = "Too many initialisation requests"
             await self.websocket.close(code=4429, reason=reason)
             return
 
         self.connection_init_received = True
-        await self.send_message({"type": "connection_ack"})
+
+        if isinstance(self.context, dict):
+            self.context["connection_params"] = payload
+        elif hasattr(self.context, "connection_params"):
+            self.context.connection_params = payload
+
+        try:
+            # TODO: probably use self.view instead
+            connection_ack_payload = await self.websocket.view.on_ws_connect(
+                self.context
+            )
+        except ConnectionRejectionError:
+            await self.websocket.close(code=4403, reason="Forbidden")
+
+        if isinstance(connection_ack_payload, UnsetType):
+            await self.send_message({"type": "connection_ack"})
+        else:
+            await self.send_message(
+                {"type": "connection_ack", "payload": connection_ack_payload}
+            )
+
         self.connection_acknowledged = True
 
     async def handle_ping(self, message: PingMessage) -> None:
@@ -218,11 +237,6 @@ class BaseGraphQLTransportWSHandler:
                 message["payload"]["query"],
                 message["payload"].get("variables"),
             )
-
-        if isinstance(self.context, dict):
-            self.context["connection_params"] = self.connection_params
-        elif hasattr(self.context, "connection_params"):
-            self.context.connection_params = self.connection_params
 
         operation = Operation(
             self,
