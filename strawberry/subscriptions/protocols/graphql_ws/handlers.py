@@ -225,9 +225,6 @@ class BaseGraphQLWSHandler(Generic[Context, RootValue]):
                 err.formatted for err in execution_result.errors
             ]
 
-        if execution_result.extensions:
-            data_message["payload"]["extensions"] = execution_result.extensions
-
         await self.send_message(data_message)
 
     async def send_message(self, message: OperationMessage) -> None:

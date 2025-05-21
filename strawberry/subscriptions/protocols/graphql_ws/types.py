@@ -44,9 +44,6 @@ class DataMessagePayload(TypedDict):
     data: object
     errors: NotRequired[list[GraphQLFormattedError]]
 
-    # Non-standard field:
-    extensions: NotRequired[dict[str, object]]
-
 
 class DataMessage(TypedDict):
     type: Literal["data"]
