@@ -165,8 +165,7 @@ async def test_connection_init_timeout(
                 "task currently doesn't work as expected"
             )
 
-    test_client = http_client_class()
-    test_client.create_app(connection_init_wait_timeout=timedelta(seconds=0))
+    test_client = http_client_class(connection_init_wait_timeout=timedelta(seconds=0))
 
     async with test_client.ws_connect(
         "/graphql", protocols=[GRAPHQL_TRANSPORT_WS_PROTOCOL]
@@ -209,8 +208,9 @@ async def test_connection_init_timeout_cancellation(
 async def test_close_twice(
     mocker: MockerFixture, request: object, http_client_class: type[HttpClient]
 ):
-    test_client = http_client_class()
-    test_client.create_app(connection_init_wait_timeout=timedelta(seconds=0.25))
+    test_client = http_client_class(
+        connection_init_wait_timeout=timedelta(seconds=0.25)
+    )
 
     async with test_client.ws_connect(
         "/graphql", protocols=[GRAPHQL_TRANSPORT_WS_PROTOCOL]
