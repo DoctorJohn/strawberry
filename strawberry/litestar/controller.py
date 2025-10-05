@@ -154,7 +154,7 @@ class LitestarWebSocketAdapter(AsyncWebSocketAdapter):
     def __init__(
         self, view: AsyncBaseHTTPView, request: WebSocket, response: WebSocket
     ) -> None:
-        super().__init__(view)
+        super().__init__(view, request, response)
         self.ws = response
 
     async def iter_json(

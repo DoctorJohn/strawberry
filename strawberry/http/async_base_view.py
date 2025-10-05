@@ -57,8 +57,24 @@ from .typevars import (
 )
 
 
-class AsyncWebSocketAdapter(abc.ABC):
-    def __init__(self, view: "AsyncBaseHTTPView") -> None:
+class AsyncWebSocketAdapter(
+    Generic[
+        Request,
+        Response,
+        SubResponse,
+        WebSocketRequest,
+        WebSocketResponse,
+        Context,
+        RootValue,
+    ],
+    abc.ABC,
+):
+    def __init__(
+        self,
+        view: "AsyncBaseHTTPView[Request, Response, SubResponse, WebSocketRequest, WebSocketResponse, Context, RootValue]",
+        request: WebSocketRequest,
+        response: WebSocketResponse,
+    ) -> None:
         self.view = view
 
     @abc.abstractmethod
@@ -92,13 +108,16 @@ class AsyncBaseHTTPView(
     keep_alive_interval: Optional[float] = None
     connection_init_wait_timeout: timedelta = timedelta(minutes=1)
     request_adapter_class: Callable[[Request], AsyncHTTPRequestAdapter]
-    websocket_adapter_class: Callable[
-        [
-            "AsyncBaseHTTPView[Any, Any, Any, Any, Any, Context, RootValue]",
+    websocket_adapter_class: type[
+        AsyncWebSocketAdapter[
+            Request,
+            Response,
+            SubResponse,
             WebSocketRequest,
             WebSocketResponse,
-        ],
-        AsyncWebSocketAdapter,
+            Context,
+            RootValue,
+        ]
     ]
     graphql_transport_ws_handler_class: type[
         BaseGraphQLTransportWSHandler[Context, RootValue]

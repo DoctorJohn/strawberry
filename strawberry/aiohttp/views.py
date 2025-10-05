@@ -40,11 +40,14 @@ if TYPE_CHECKING:
 
 class AiohttpWebSocketAdapter(AsyncWebSocketAdapter):
     def __init__(
-        self, view: AsyncBaseHTTPView, request: web.Request, ws: web.WebSocketResponse
+        self,
+        view: AsyncBaseHTTPView,
+        request: web.Request,
+        response: web.WebSocketResponse,
     ) -> None:
-        super().__init__(view)
+        super().__init__(view, request, response)
         self.request = request
-        self.ws = ws
+        self.ws = response
 
     async def iter_json(
         self, *, ignore_parsing_errors: bool = False

@@ -32,7 +32,7 @@ class ChannelsWebSocketAdapter(AsyncWebSocketAdapter):
         request: GraphQLWSConsumer,
         response: GraphQLWSConsumer,
     ) -> None:
-        super().__init__(view)
+        super().__init__(view, request, response)
         self.ws_consumer = response
 
     async def iter_json(

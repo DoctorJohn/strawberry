@@ -34,7 +34,7 @@ class QuartWebSocketAdapter(AsyncWebSocketAdapter):
     def __init__(
         self, view: AsyncBaseHTTPView, request: Websocket, response: Response
     ) -> None:
-        super().__init__(view)
+        super().__init__(view, request, response)
         self.ws = request
 
     async def iter_json(
